@@ -790,6 +790,6 @@
     <%- include('partials/restart-overlay') %>
 
     <%- include('partials/scripts/settings-scripts') %>
-    <script src="js/settings.js"></script>
+    <script src="/js/settings.js?v=<%= version || 'dev' %>"></script>
     <%- include('partials/shell/footer') %>
     <%- include('partials/shell/body-close') %>
