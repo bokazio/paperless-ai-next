@@ -2,12 +2,10 @@ const {
   calculateTokens,
   calculateTotalPromptTokens,
   truncateToTokenLimit,
-  writePromptToFile,
   extractChatMessageContent
 } = require('./serviceUtils');
 const OpenAI = require('openai');
 const config = require('../config/config');
-const tiktoken = require('tiktoken');
 const paperlessService = require('./paperlessService');
 const fs = require('fs').promises;
 const path = require('path');
@@ -20,6 +18,271 @@ class CustomOpenAIService {
   constructor() {
     this.client = null;
     this.tokenizer = null;
+  }
+
+  _normalizeNotesField(parsedResponse) {
+    if (!parsedResponse || typeof parsedResponse !== 'object') return parsedResponse;
+    if (parsedResponse.notes == null && parsedResponse.note != null) {
+      parsedResponse.notes = parsedResponse.note;
+    }
+    if (
+      parsedResponse.notes != null &&
+      !Array.isArray(parsedResponse.notes) &&
+      typeof parsedResponse.notes !== 'string'
+    ) {
+      parsedResponse.notes = String(parsedResponse.notes);
+    }
+    return parsedResponse;
+  }
+
+  _sanitizeAnalysisResponse(parsedResponse) {
+    const safeResponse = parsedResponse || {};
+    const tags = Array.isArray(safeResponse.tags)
+      ? safeResponse.tags.filter((tag) => typeof tag === 'string' && tag.trim()).map((tag) => tag.trim())
+      : [];
+
+    return {
+      title: typeof safeResponse.title === 'string' ? safeResponse.title.trim() : '',
+      correspondent: typeof safeResponse.correspondent === 'string' ? safeResponse.correspondent.trim() : '',
+      tags,
+      document_date: typeof safeResponse.document_date === 'string' ? safeResponse.document_date.trim() : '',
+      language: typeof safeResponse.language === 'string' ? safeResponse.language.trim() : '',
+      document_type: typeof safeResponse.document_type === 'string' ? safeResponse.document_type.trim() : '',
+      custom_fields: safeResponse.custom_fields && typeof safeResponse.custom_fields === 'object'
+        ? safeResponse.custom_fields
+        : {}
+    };
+  }
+
+  _chunkContent(content, targetChunkTokens) {
+    const text = String(content || '');
+    if (!text) {
+      return [];
+    }
+
+    const approxCharsPerToken = 4;
+    const chunkChars = Math.max(2000, targetChunkTokens * approxCharsPerToken);
+    const overlapChars = Math.min(500, Math.floor(chunkChars * 0.1));
+    const step = Math.max(800, chunkChars - overlapChars);
+    const chunks = [];
+
+    for (let start = 0; start < text.length; start += step) {
+      const end = Math.min(start + chunkChars, text.length);
+      const chunk = text.slice(start, end).trim();
+      if (chunk) {
+        chunks.push({
+          index: chunks.length,
+          content: chunk
+        });
+      }
+
+      if (end >= text.length) {
+        break;
+      }
+    }
+
+    return chunks;
+  }
+
+  _isContextOverflowError(error) {
+    if (!error) {
+      return false;
+    }
+
+    const message = String(error?.message || '').toLowerCase();
+    const errorMessage = String(error?.error?.message || '').toLowerCase();
+    const param = String(error?.param || error?.error?.param || '').toLowerCase();
+
+    return message.includes('maximum context length')
+      || errorMessage.includes('maximum context length')
+      || param === 'input_tokens'
+      || message.includes('input tokens');
+  }
+
+  async _fitChunkToInputBudget(systemPrompt, chunkContent, model, maxInputTokens) {
+    let candidate = String(chunkContent || '');
+    if (!candidate) {
+      return candidate;
+    }
+
+    for (let i = 0; i < 6; i += 1) {
+      const combinedTokens = await calculateTotalPromptTokens(systemPrompt, [candidate], model);
+      if (combinedTokens <= maxInputTokens) {
+        return candidate;
+      }
+
+      const currentChunkTokens = await calculateTokens(candidate, model);
+      const nextChunkTokens = Math.max(120, Math.floor(currentChunkTokens * 0.75));
+      if (nextChunkTokens >= currentChunkTokens) {
+        break;
+      }
+      candidate = await truncateToTokenLimit(candidate, nextChunkTokens, model);
+    }
+
+    return candidate;
+  }
+
+  _mergeChunkResults(chunkDocuments) {
+    const validDocs = (chunkDocuments || []).filter(Boolean);
+    if (validDocs.length === 0) {
+      return {
+        title: '',
+        correspondent: '',
+        tags: [],
+        document_date: '',
+        language: '',
+        document_type: '',
+        custom_fields: {}
+      };
+    }
+
+    const countValues = (values) => {
+      const counts = new Map();
+      for (const value of values) {
+        const normalized = typeof value === 'string' ? value.trim() : '';
+        if (!normalized) {
+          continue;
+        }
+        counts.set(normalized, (counts.get(normalized) || 0) + 1);
+      }
+      return counts;
+    };
+
+    const mostFrequent = (values) => {
+      const counts = countValues(values);
+      let bestValue = '';
+      let bestCount = -1;
+      for (const [value, count] of counts.entries()) {
+        if (count > bestCount) {
+          bestValue = value;
+          bestCount = count;
+        }
+      }
+      return bestValue;
+    };
+
+    const title = mostFrequent(validDocs.map((doc) => doc.title));
+    const correspondent = mostFrequent(validDocs.map((doc) => doc.correspondent));
+    const documentDate = mostFrequent(validDocs.map((doc) => doc.document_date));
+    const language = mostFrequent(validDocs.map((doc) => doc.language));
+    const documentType = mostFrequent(validDocs.map((doc) => doc.document_type));
+
+    const tagCounts = new Map();
+    for (const doc of validDocs) {
+      for (const tag of (doc.tags || [])) {
+        tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
+      }
+    }
+
+    const tags = [...tagCounts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 20)
+      .map(([tag]) => tag);
+
+    const customFieldVotes = new Map();
+    for (const doc of validDocs) {
+      const customFields = doc.custom_fields && typeof doc.custom_fields === 'object' ? doc.custom_fields : {};
+      for (const key of Object.keys(customFields)) {
+        const field = customFields[key];
+        if (!field || typeof field !== 'object') {
+          continue;
+        }
+
+        const fieldName = typeof field.field_name === 'string' ? field.field_name.trim() : '';
+        const value = typeof field.value === 'string' ? field.value.trim() : '';
+        if (!fieldName || !value) {
+          continue;
+        }
+
+        const voteKey = fieldName.toLowerCase();
+        if (!customFieldVotes.has(voteKey)) {
+          customFieldVotes.set(voteKey, {
+            field_name: fieldName,
+            valueCounts: new Map()
+          });
+        }
+
+        const voteEntry = customFieldVotes.get(voteKey);
+        voteEntry.valueCounts.set(value, (voteEntry.valueCounts.get(value) || 0) + 1);
+      }
+    }
+
+    const mergedCustomFields = {};
+    let customFieldIndex = 0;
+    for (const voteEntry of customFieldVotes.values()) {
+      let bestValue = '';
+      let bestCount = -1;
+      for (const [value, count] of voteEntry.valueCounts.entries()) {
+        if (count > bestCount) {
+          bestValue = value;
+          bestCount = count;
+        }
+      }
+
+      if (bestValue) {
+        mergedCustomFields[customFieldIndex] = {
+          field_name: voteEntry.field_name,
+          value: bestValue
+        };
+        customFieldIndex += 1;
+      }
+    }
+
+    return {
+      title,
+      correspondent,
+      tags,
+      document_date: documentDate,
+      language,
+      document_type: documentType,
+      custom_fields: mergedCustomFields
+    };
+  }
+
+  async _analyzeSingleChunk(systemPrompt, chunkContent, model, timestamp) {
+    const response = await this.client.chat.completions.create({
+      model,
+      messages: [
+        {
+          role: 'system',
+          content: systemPrompt
+        },
+        {
+          role: 'user',
+          content: chunkContent
+        }
+      ],
+      temperature: config.aiTemperatureAnalysis
+    });
+
+    if (!response?.choices?.[0]?.message?.content) {
+      throw new Error('Invalid API response structure');
+    }
+
+    console.log(`[DEBUG] [${timestamp}] Custom OpenAI request sent`);
+    console.log(`[DEBUG] [${timestamp}] Total tokens: ${response.usage?.total_tokens ?? 0}`);
+
+    let jsonContent = response.choices[0].message.content;
+    jsonContent = jsonContent.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+
+    let parsedResponse;
+    try {
+      parsedResponse = JSON.parse(jsonContent);
+      await fs.mkdir(path.dirname(responseLogPath), { recursive: true });
+      await fs.appendFile(responseLogPath, `${jsonContent}\n`);
+    } catch (error) {
+      console.error('Failed to parse JSON response:', error);
+      throw new Error('Invalid JSON response from API');
+    }
+
+    return {
+      document: this._sanitizeAnalysisResponse(parsedResponse),
+      metrics: {
+        promptTokens: response.usage?.prompt_tokens || 0,
+        completionTokens: response.usage?.completion_tokens || 0,
+        totalTokens: response.usage?.total_tokens || 0
+      }
+    };
   }
 
   initialize() {
@@ -54,15 +317,14 @@ class CustomOpenAIService {
 
         if (!thumbnailData) {
           console.warn('Thumbnail not found');
-          return;
+        } else {
+          await fs.mkdir(THUMBNAIL_CACHE_DIR, { recursive: true });
+          await fs.writeFile(cachePath, thumbnailData);
         }
-
-        await fs.mkdir(THUMBNAIL_CACHE_DIR, { recursive: true });
-        await fs.writeFile(cachePath, thumbnailData);
       }
 
       // Format existing tags
-      let existingTagsList = existingTags.join(', ');
+      const existingTagsList = Array.isArray(existingTags) ? existingTags.join(', ') : String(existingTags || '');
 
       // Get external API data if available and validate it
       let externalApiData = options.externalApiData || null;
@@ -91,17 +353,15 @@ class CustomOpenAIService {
         customFieldsObj = { custom_fields: [] };
       }
 
-      // Generate custom fields template for the prompt
       const customFieldsTemplate = {};
-
       customFieldsObj.custom_fields.forEach((field, index) => {
         let valueHint;
         if (field.data_type === 'date') {
-          valueHint = "Fill in the date in ISO 8601 format (YYYY-MM-DD) based on your analysis";
+          valueHint = 'Fill in the date in ISO 8601 format (YYYY-MM-DD) based on your analysis';
         } else if (field.data_type === 'boolean') {
           valueHint = "Fill in 'true' or 'false' based on your analysis";
         } else {
-          valueHint = "Fill in the value based on your analysis";
+          valueHint = 'Fill in the value based on your analysis';
         }
         customFieldsTemplate[index] = {
           field_name: field.value,
@@ -109,27 +369,24 @@ class CustomOpenAIService {
         };
       });
 
-      // Convert template to string for replacement and wrap in custom_fields
       const customFieldsStr = '"custom_fields": ' + JSON.stringify(customFieldsTemplate, null, 2)
         .split('\n')
-        .map(line => '    ' + line)  // Add proper indentation
+        .map(line => '    ' + line)
         .join('\n');
 
-      // Get system prompt based on configuration
+      const mustHavePrompt = config.mustHavePrompt.replace('%CUSTOMFIELDS%', customFieldsStr);
       if (config.useExistingData === 'yes' && config.restrictToExistingTags === 'no' && config.restrictToExistingCorrespondents === 'no') {
         systemPrompt = `
         Pre-existing tags: ${existingTagsList}\n\n
         Pre-existing correspondents: ${existingCorrespondentList}\n\n
         Pre-existing document types: ${existingDocumentTypesList.join(', ')}\n\n
-        ` + process.env.SYSTEM_PROMPT + '\n\n' + config.mustHavePrompt.replace('%CUSTOMFIELDS%', customFieldsStr);
+        ` + process.env.SYSTEM_PROMPT + '\n\n' + mustHavePrompt;
         promptTags = '';
       } else {
-        const mustHavePrompt = config.mustHavePrompt.replace('%CUSTOMFIELDS%', customFieldsStr);
         systemPrompt = process.env.SYSTEM_PROMPT + '\n\n' + mustHavePrompt;
         promptTags = '';
       }
 
-      // Process placeholder replacements in system prompt
       systemPrompt = RestrictionPromptService.processRestrictionsInPrompt(
         systemPrompt,
         existingTags,
@@ -138,7 +395,6 @@ class CustomOpenAIService {
         config
       );
 
-      // Include validated external API data if available
       if (validatedExternalApiData) {
         systemPrompt += `\n\nAdditional context from external API:\n${validatedExternalApiData}`;
       }
@@ -150,13 +406,11 @@ class CustomOpenAIService {
         ` + config.specialPromptPreDefinedTags;
       }
 
-      // Custom prompt override if provided
       if (customPrompt) {
         console.log('[DEBUG] Replace system prompt with custom prompt');
-        systemPrompt = customPrompt + '\n\n' + config.mustHavePrompt.replace('%CUSTOMFIELDS%', customFieldsStr);
+        systemPrompt = customPrompt + '\n\n' + mustHavePrompt;
       }
 
-      // Calculate tokens AFTER all prompt modifications are complete
       const totalPromptTokens = await calculateTotalPromptTokens(
         systemPrompt,
         process.env.USE_PROMPT_TAGS === 'yes' ? [promptTags] : [],
@@ -164,105 +418,120 @@ class CustomOpenAIService {
       );
 
       const maxTokens = Number(config.tokenLimit);
-      const reservedTokens = totalPromptTokens + Number(config.responseTokens);
-      const availableTokens = maxTokens - reservedTokens;
+      const configuredResponseTokens = Number(config.responseTokens);
+      let responseTokenBudget = Number.isFinite(configuredResponseTokens) && configuredResponseTokens > 0
+        ? configuredResponseTokens
+        : 1000;
 
-      // Validate that we have positive available tokens
+      if (responseTokenBudget >= maxTokens) {
+        responseTokenBudget = Math.max(128, Math.floor(maxTokens * 0.1));
+      }
+
+      const reservedTokens = totalPromptTokens + responseTokenBudget;
+      const availableTokens = maxTokens - reservedTokens;
+      const maxInputTokens = Math.max(512, maxTokens - responseTokenBudget);
+
       if (availableTokens <= 0) {
         console.warn(`[WARNING] No available tokens for content. Reserved: ${reservedTokens}, Max: ${maxTokens}`);
         throw new Error('Token limit exceeded: prompt too large for available token limit');
       }
 
-      console.log(`[DEBUG] Token calculation - Prompt: ${totalPromptTokens}, Reserved: ${reservedTokens}, Available: ${availableTokens}`);
+      if (totalPromptTokens >= maxInputTokens - 100) {
+        throw new Error(
+          `Prompt description is too large for configured model context. ` +
+          `Prompt tokens: ${totalPromptTokens}, max input budget: ${maxInputTokens}. ` +
+          `Reduce Prompt Description or increase Token Limit.`
+        );
+      }
+
+      console.log(`[DEBUG] Token calculation - Prompt: ${totalPromptTokens}, Reserved: ${reservedTokens}, Available: ${availableTokens}, ResponseBudget: ${responseTokenBudget}`);
       console.log(`[DEBUG] Use existing data: ${config.useExistingData}, Restrictions applied based on useExistingData setting`);
       console.log(`[DEBUG] External API data: ${validatedExternalApiData ? 'included' : 'none'}`);
 
-      const truncatedContent = await truncateToTokenLimit(content, availableTokens, model);
+      const promptAwareChunkBudget = Math.max(300, maxInputTokens - totalPromptTokens - 96);
+      const targetChunkTokens = Math.max(300, Math.floor(promptAwareChunkBudget * 0.75));
+      const contentChunks = this._chunkContent(content, targetChunkTokens);
+      const analysisChunks = contentChunks.length > 0 ? contentChunks : [{ index: 0, content: String(content || '') }];
 
-      // console.log('######################################################################');
-      // console.log(`[DEBUG] Content length: ${content.length}, Truncated content length: ${truncatedContent.length}`);
-      // console.log(`[DEBUG] Truncated content: ${truncatedContent}`);
-      // console.log(`[DEBUG] System prompt: ${systemPrompt}`);
-      // console.log(`[DEBUG] Prompt tags: ${promptTags}`);
-      // console.log(`[DEBUG] Model: ${model}`);
-      // console.log(`[DEBUG] Custom fields: ${customFieldsStr}`);
-      // console.log(`[DEBUG] Existing tags: ${existingTagsList}`);
-      // console.log(`[DEBUG] Existing correspondents: ${existingCorrespondentList}`);
-      // console.log(`[DEBUG] Custom prompt: ${customPrompt}`);
-      // console.log(`[DEBUG] External API data: ${validatedExternalApiData}`);
-      // console.log('######################################################################');
+      let aggregatePromptTokens = 0;
+      let aggregateCompletionTokens = 0;
+      let aggregateTotalTokens = 0;
+      const successfulChunkDocuments = [];
+      const failedChunks = [];
 
+      for (const chunk of analysisChunks) {
+        let chunkTokenBudget = targetChunkTokens;
+        let lastError = null;
+        let success = false;
 
-      const response = await this.client.chat.completions.create({
-        model: model,
-        messages: [
-          {
-            role: "system",
-            content: systemPrompt
-          },
-          {
-            role: "user",
-            content: truncatedContent
+        for (let attempt = 1; attempt <= 4; attempt += 1) {
+          let chunkContent = await truncateToTokenLimit(chunk.content, chunkTokenBudget, model);
+          chunkContent = await this._fitChunkToInputBudget(systemPrompt, chunkContent, model, maxInputTokens);
+          try {
+            const chunkResult = await this._analyzeSingleChunk(systemPrompt, chunkContent, model, timestamp);
+            successfulChunkDocuments.push(chunkResult.document);
+            aggregatePromptTokens += chunkResult.metrics.promptTokens;
+            aggregateCompletionTokens += chunkResult.metrics.completionTokens;
+            aggregateTotalTokens += chunkResult.metrics.totalTokens;
+            success = true;
+            break;
+          } catch (chunkError) {
+            lastError = chunkError;
+            if (this._isContextOverflowError(chunkError) && chunkTokenBudget > 300) {
+              chunkTokenBudget = Math.max(300, Math.floor(chunkTokenBudget * 0.65));
+              console.warn(
+                `[WARNING] Chunk ${chunk.index + 1} exceeded context, retrying with smaller budget (${chunkTokenBudget} tokens).`,
+                {
+                  error: chunkError.message,
+                  status: chunkError.status,
+                  param: chunkError.param || chunkError?.error?.param,
+                  type: chunkError.type || chunkError?.error?.type,
+                  maxInputTokens,
+                  promptTokens: totalPromptTokens
+                }
+              );
+              continue;
+            }
+            break;
           }
-        ],
-        temperature: config.aiTemperatureAnalysis,
-      });
+        }
 
-      // Handle response
-      //console.log(`MESSAGE: ${response?.choices?.[0]?.message?.content}`);
-      const message = response?.choices?.[0]?.message;
-      let jsonContent = extractChatMessageContent(message, 'Custom OpenAI');
-      if (!jsonContent) {
-        throw new Error('Invalid API response structure');
+        if (!success) {
+          const errorMessage = lastError?.message || 'Unknown chunk analysis failure';
+          failedChunks.push(`chunk ${chunk.index + 1}: ${errorMessage}`);
+        }
       }
 
-      // Log token usage
-      console.log(`[DEBUG] [${timestamp}] Custom OpenAI request sent`);
-      console.log(`[DEBUG] [${timestamp}] Total tokens: ${response.usage.total_tokens}`);
+      if (successfulChunkDocuments.length === 0) {
+        throw new Error(`Document analysis failed for all chunks. Details: ${failedChunks.slice(0, 3).join(' | ')}`);
+      }
 
-      const usage = response.usage;
+      const mergedDocument = this._mergeChunkResults(successfulChunkDocuments);
       const mappedUsage = {
-        promptTokens: usage.prompt_tokens,
-        completionTokens: usage.completion_tokens,
-        totalTokens: usage.total_tokens
+        promptTokens: aggregatePromptTokens,
+        completionTokens: aggregateCompletionTokens,
+        totalTokens: aggregateTotalTokens
       };
 
-      // Strip <think>...</think> reasoning tags from models like Qwen3, DeepSeek-R1
-      jsonContent = jsonContent.replace(/<think>[\s\S]*?<\/think>/g, '');
-      jsonContent = jsonContent.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-
-      let parsedResponse;
-      try {
-        parsedResponse = JSON.parse(jsonContent);
-      } catch (error) {
-        console.error(`Failed to parse JSON response: ${error.message}`); console.debug(error);
-        throw new Error('Invalid JSON response from API');
-      }
-
-      try {
-        await fs.mkdir(path.dirname(responseLogPath), { recursive: true });
-        await fs.appendFile(responseLogPath, `${jsonContent}\n`);
-      } catch (logError) {
-        console.warn('Failed to write AI response log:', logError.message);
-      }
-
-      // Validate response structure
-      if (!parsedResponse || !Array.isArray(parsedResponse.tags) || (typeof parsedResponse.correspondent !== 'string' && parsedResponse.correspondent !== null)) {
-        throw new Error('AI could not determine assignable metadata: no tags or correspondent found');
-      }
-
       return {
-        document: parsedResponse,
+        document: mergedDocument,
         metrics: mappedUsage,
-        truncated: truncatedContent.length < content.length
+        truncated: analysisChunks.length > 1,
+        partial: failedChunks.length > 0,
+        warnings: failedChunks
       };
     } catch (error) {
-      console.error(`Failed to analyze document: ${error.message}`);
-      console.debug(error);
+      console.error('Failed to analyze document:', error);
       return {
-        document: { tags: [], correspondent: null },
+        document: { tags: [], correspondent: null, notes: null },
         metrics: null,
-        error: error.message
+        error: error.message,
+        errorDetails: {
+          status: error.status || error?.error?.status || null,
+          code: error.code || error?.error?.code || null,
+          type: error.type || error?.error?.type || null,
+          param: error.param || error?.error?.param || null
+        }
       };
     }
   }
