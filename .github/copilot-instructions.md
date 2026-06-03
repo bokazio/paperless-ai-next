@@ -190,7 +190,7 @@ Upstream Status:
 ## Documentation Site
 
 The documentation has been moved to a separate repository:
-**https://github.com/admonstrator/paperless-ai-next-docs**
+**https://github.com/bokazio/paperless-ai-next-docs**
 
 It is built with Astro + Starlight and deployed to GitHub Pages at
 **https://paperless-ai-next.admon.me/**

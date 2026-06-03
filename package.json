@@ -52,7 +52,7 @@
       "OPENAPI/openapi.json"
     ]
   },
-  "author": "admonstrator",
+  "author": "bokazio",
   "license": "MIT",
   "dependencies": {
     "@fortawesome/fontawesome-free": "^6.7.2",

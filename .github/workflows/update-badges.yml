@@ -39,7 +39,7 @@ jobs:
           latest_release=$(echo "$release_response" | jq -r '.tag_name // "N/A"')
 
           # Get Docker Hub pull count
-          docker_response=$(curl -s "https://hub.docker.com/v2/repositories/admonstrator/paperless-ai-next/")
+          docker_response=$(curl -s "https://hub.docker.com/v2/repositories/bokazio/paperless-ai-next/")
           docker_pulls=$(echo "$docker_response" | jq -r '.pull_count // 0')
 
           echo "stars=$stars" >> $GITHUB_OUTPUT
@@ -101,7 +101,7 @@ jobs:
           sed -i "s|https://img.shields.io/github/stars/Admonstrator/paperless-ai-next?style=for-the-badge|https://img.shields.io/badge/stars-${stars}-${stars_color}?style=for-the-badge\&logo=github|g" README.md
 
           # Replace dynamic Docker pulls badge with static badge
-          sed -i "s|https://img.shields.io/docker/pulls/admonstrator/paperless-ai-next?style=for-the-badge\&logo=docker|https://img.shields.io/badge/docker%20pulls-${docker_pulls_fmt}-${docker_color}?style=for-the-badge\&logo=docker|g" README.md
+          sed -i "s|https://img.shields.io/docker/pulls/bokazio/paperless-ai-next?style=for-the-badge\&logo=docker|https://img.shields.io/badge/docker%20pulls-${docker_pulls_fmt}-${docker_color}?style=for-the-badge\&logo=docker|g" README.md
 
           # Add last updated footer
           echo "" >> README.md

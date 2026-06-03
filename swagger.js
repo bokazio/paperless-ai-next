@@ -15,8 +15,8 @@ const swaggerDefinition = {
       url: 'https://opensource.org/licenses/MIT',
     },
     contact: {
-      name: 'admonstrator',
-      url: 'https://github.com/admonstrator',
+      name: 'bokazio',
+      url: 'https://github.com/bokazio',
     },
   },
   servers: [

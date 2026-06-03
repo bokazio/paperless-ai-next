@@ -218,7 +218,7 @@
 
         async function getStarsCount() {
             try {
-                const response = await fetch('https://api.github.com/repos/admonstrator/paperless-ai-next');
+                const response = await fetch('https://api.github.com/repos/bokazio/paperless-ai-next');
                 if (!response.ok) {
                     throw new Error('Failed to fetch repo info');
                 }
@@ -319,7 +319,7 @@
                 ].join('\n'))
             });
 
-            sidebarBugReportLink.href = `https://github.com/admonstrator/paperless-ai-next/issues/new?${issueParams.toString()}`;
+            sidebarBugReportLink.href = `https://github.com/bokazio/paperless-ai-next/issues/new?${issueParams.toString()}`;
         }
     });
 </script>

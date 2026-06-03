@@ -4,7 +4,7 @@
 
 <h1>Paperless-AI <span style="font-size: 0.62em; color: #2563eb; font-weight: 700;">next</span></h1>
 
-[![Latest Release](https://img.shields.io/github/v/release/admonstrator/paperless-ai-next?style=for-the-badge&logo=github&color=0ea5e9)](https://github.com/admonstrator/paperless-ai-next/releases/latest) [![Docker Pulls](https://img.shields.io/docker/pulls/admonstrator/paperless-ai-next?style=for-the-badge&logo=docker&color=10b981)](https://hub.docker.com/r/admonstrator/paperless-ai-next) [![Docs](https://img.shields.io/badge/docs-Live-0891b2?style=for-the-badge&logo=readthedocs)](https://paperless-ai-next.admon.me/)
+[![Latest Release](https://img.shields.io/github/v/release/bokazio/paperless-ai-next?style=for-the-badge&logo=github&color=0ea5e9)](https://github.com/bokazio/paperless-ai-next/releases/latest) [![Docker Pulls](https://img.shields.io/docker/pulls/bokazio/paperless-ai-next?style=for-the-badge&logo=docker&color=10b981)](https://hub.docker.com/r/bokazio/paperless-ai-next) [![Docs](https://img.shields.io/badge/docs-Live-0891b2?style=for-the-badge&logo=readthedocs)](https://paperless-ai-next.admon.me/)
 
 [🧠 What makes it "Next"](#-the-evolution-what-makes-it-next) | [💖 Fuel the Evolution](#-fuel-the-evolution) | [🚀 Quick Start](#-quick-start) | [💬 Frequently Asked Questions](#-frequently-asked-questions)
 
@@ -72,7 +72,7 @@ Maintaining this solo, chasing bugs, and keeping up with the rapid pace of AI is
 
 <div align="center">
 
-[![GitHub Sponsors](https://img.shields.io/badge/GitHub-Sponsors-EA4AAA?style=for-the-badge&logo=github)](https://github.com/sponsors/admonstrator) [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/admon) [![PayPal](https://img.shields.io/badge/PayPal-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://paypal.me/aaronviehl) [![Ko-fi](https://img.shields.io/badge/Ko--fi-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/admon)
+[![GitHub Sponsors](https://img.shields.io/badge/GitHub-Sponsors-EA4AAA?style=for-the-badge&logo=github)](https://github.com/sponsors/bokazio) [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/admon) [![PayPal](https://img.shields.io/badge/PayPal-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://paypal.me/aaronviehl) [![Ko-fi](https://img.shields.io/badge/Ko--fi-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/admon)
 
 </div>
 
@@ -101,7 +101,7 @@ Please check the docker variables [here](https://paperless-ai-next.admon.me/gett
 ```yaml
 services:
   paperless-ai-next:
-    image: admonstrator/paperless-ai-next:latest
+    image: bokazio/paperless-ai-next:latest
     container_name: paperless-ai-next
     restart: unless-stopped
     ports:
@@ -119,10 +119,10 @@ Then open [http://localhost:3000](http://localhost:3000) to complete setup.
 
 | Image Tag                                    | Size        |
 | -------------------------------------------- | ----------- |
-| `admonstrator/paperless-ai-next:latest`      | ~500–700 MB |
-| `admonstrator/paperless-ai-next:latest-lite` | ~500–700 MB |
+| `bokazio/paperless-ai-next:latest`      | ~500–700 MB |
+| `bokazio/paperless-ai-next:latest-lite` | ~500–700 MB |
 
-**Docker Hub:** [admonstrator/paperless-ai-next](https://hub.docker.com/r/admonstrator/paperless-ai-next)
+**Docker Hub:** [bokazio/paperless-ai-next](https://hub.docker.com/r/bokazio/paperless-ai-next)
 
 Versioned release tags use the format `vYYYY.MM.##` (example: `v2026.03.01`).
 
