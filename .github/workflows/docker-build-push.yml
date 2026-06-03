@@ -1,7 +1,7 @@
 name: Docker Build and Push
 
 env:
-  DOCKERHUB_REPO: admonstrator/paperless-ai-next
+  DOCKERHUB_REPO: bokazio/paperless-ai-next
 
 on:
   workflow_dispatch:
