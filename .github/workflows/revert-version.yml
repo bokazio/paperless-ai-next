@@ -109,7 +109,7 @@ jobs:
         run: |
           token=$(curl -s -X POST \
             -H "Content-Type: application/json" \
-            -d "{\"username\": \"${{ secrets.DOCKER_HUB_USERNAME }}\", \"password\": \"${{ secrets.DOCKER_HUB_TOKEN }}\"}" \
+            -d "{\"username\": \"${{ secrets.DOCKERHUB_USERNAME }}\", \"password\": \"${{ secrets.DOCKERHUB_TOKEN }}\"}" \
             "https://hub.docker.com/v2/users/login/" | jq -r '.token')
 
           if [ -z "$token" ] || [ "$token" = "null" ]; then
