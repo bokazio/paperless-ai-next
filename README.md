@@ -164,6 +164,6 @@ If it's OpenAI-compatible, it probably works. If not, open an issue! Since I hav
 
 <div align="center">
 
-_Last updated: 2026-10-04_
+_Last updated: 2026-10-11_
 
 </div>
